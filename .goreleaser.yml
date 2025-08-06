@@ -22,7 +22,7 @@ archives:
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "arm64" }}aarch64
       {{- else }}{{ .Arch }}{{ end }}
-      {{- if eq .Os "windows" }}.exe{{ end }}
+      {{- if eq .Os "windows" }}{{ end }}
 
 checksum:
   name_template: 'checksums.txt'
