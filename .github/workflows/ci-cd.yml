@@ -11,9 +11,7 @@ env:
 permissions:
   contents: write # Required to create releases and upload assets
   packages: write # Required if publishing to GitHub Packages
-  tokens: write # Required for GoReleaser to access GitHub API
-
-# Define the jobs that will run
+  id-token: write # Required for GitHub Actions to create tags
 jobs:
   release:
     name: Create Release
