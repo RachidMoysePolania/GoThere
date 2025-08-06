@@ -74,7 +74,7 @@ jobs:
   notify:
     name: Notify Release Status
     runs-on: ubuntu-latest
-    needs: [test, release]
+    needs: release
     if: always() # Run even if previous jobs fail
 
     steps:
