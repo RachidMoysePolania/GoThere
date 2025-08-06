@@ -6,12 +6,14 @@ on:
       - main
 
 env:
-  GO_VERSION: "1.24.5" # Specify your Go version
+  GO_VERSION: "1.24.5"
+  DOCKER_IMAGE_NAME: gothere
 
 permissions:
-  contents: write # Required to create releases and upload assets
-  packages: write # Required if publishing to GitHub Packages
-  id-token: write # Required for GitHub Actions to create tags
+  contents: write
+  packages: write
+  id-token: write
+
 jobs:
   release:
     name: Create Release
@@ -50,7 +52,6 @@ jobs:
 
           echo "Created and pushed tag: $VERSION"
 
-      # Step 5: Run GoReleaser to build and create release
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
@@ -68,23 +69,110 @@ jobs:
           BUILD_USER: github-actions
           BUILD_DATE: ${{ steps.version.outputs.version }}
 
-  # Job 3: Notify on success/failure (optional)
+  # New job for Docker Hub deployment
+  docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: release # This job runs after the release job completes successfully
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate version tag (for Docker)
+        id: docker_version
+        run: |
+          # Use the same versioning logic as the release job
+          VERSION="v$(date +'%Y.%m.%d-%H%M%S')"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Docker version: $VERSION"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # Enable advanced Docker features like multi-platform builds
+          install: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            # Tag with version (e.g., v2024.08.06-143022)
+            type=raw,value=${{ steps.docker_version.outputs.version }}
+            # Tag as latest for the most recent build
+            type=raw,value=latest
+            # Tag with branch name (main)
+            type=ref,event=branch
+            # Tag with short commit SHA
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          # Enable build cache for faster subsequent builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Build arguments (optional)
+          build-args: |
+            GO_VERSION=${{ env.GO_VERSION }}
+            BUILD_DATE=${{ steps.docker_version.outputs.version }}
+
+      - name: Docker image summary
+        run: |
+          echo "🐳 Docker image built and pushed successfully!"
+          echo "📦 Image tags:"
+          echo "${{ steps.meta.outputs.tags }}" | sed 's/^/  - /'
+          echo ""
+          echo "🔗 Docker Hub URL: https://hub.docker.com/r/${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}"
+
+  # Enhanced notification job that includes Docker status
   notify:
     name: Notify Release Status
     runs-on: ubuntu-latest
-    needs: release
+    needs: [release, docker]
     if: always() # Run even if previous jobs fail
 
     steps:
       - name: Notify Success
-        if: needs.release.result == 'success'
+        if: needs.release.result == 'success' && needs.docker.result == 'success'
         run: |
-          echo "✅ Release completed successfully!"
-          echo "New release created with GoReleaser"
+          echo "✅ Release and Docker deployment completed successfully!"
+          echo "📦 New GitHub release created with GoReleaser"
+          echo "🐳 Docker image pushed to Docker Hub"
+          echo ""
+          echo "🚀 Deployment Summary:"
+          echo "  - GitHub Release: ✅ Success"
+          echo "  - Docker Hub: ✅ Success"
+
+      - name: Notify Partial Success
+        if: needs.release.result == 'success' && needs.docker.result != 'success'
+        run: |
+          echo "⚠️  Release succeeded but Docker deployment failed!"
+          echo "📦 GitHub release created successfully"
+          echo "🐳 Docker push failed - check Docker job logs"
 
       - name: Notify Failure
         if: needs.release.result == 'failure'
         run: |
           echo "❌ Release failed!"
-          echo "Check the logs for details"
+          echo "Check the release job logs for details"
           exit 1
+
+# Concurrency control - prevents multiple releases running simultaneously
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
